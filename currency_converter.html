@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Currency Converter — Live Rates</title>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  :root{
+    --bg:#f6f8fb; --card:#ffffff; --muted:#586374; --accent:#0b76ff;
+    --danger:#d9534f; --success:#2aa84f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;font-family:Inter,ui-sans-serif,system-ui,Arial;
+    background:linear-gradient(180deg,#eef3fb 0%, #f6f8fb 100%);color:#0b1b2b;
+    display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;
+  }
+  .app{
+    width:100%;max-width:960px;background:var(--card);border-radius:12px;
+    box-shadow:0 8px 30px rgba(20,40,80,0.08);overflow:hidden;
+    display:grid;grid-template-columns:1fr 420px;gap:0;
+  }
+  @media (max-width:880px){ .app{grid-template-columns:1fr;}}
+  .left { padding:28px; }
+  .right { background:#f8fbff;padding:18px;border-left:1px solid rgba(11,118,255,0.04); }
+  h1{margin:0 0 6px;font-size:20px}
+  p.lead{margin:0 0 18px;color:var(--muted)}
+  .row{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  input[type=number], select {
+    padding:10px 12px;border-radius:8px;border:1px solid #e6eefc;font-size:15px;
+    min-width:0;background:white;
+  }
+  input[type=number]{width:160px}
+  select{height:44px}
+  .btn {
+    background:var(--accent);color:white;border:none;padding:10px 14px;border-radius:8px;
+    cursor:pointer;font-weight:600;
+  }
+  .btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(11,118,255,0.12)}
+  .small{font-size:13px;color:var(--muted)}
+  .swap {padding:8px;border-radius:8px;background:#fff;border:1px solid #e6eefc;cursor:pointer}
+  .result-card{margin-top:12px;padding:16px;border-radius:10px;background:linear-gradient(180deg,#ffffff,#fbfdff);box-shadow:0 6px 18px rgba(10,30,60,0.04)}
+  .big {font-weight:700;font-size:22px}
+  .meta{color:var(--muted);font-size:13px;margin-top:6px}
+  .history-list{max-height:220px;overflow:auto;padding-top:8px}
+  .history-item{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed rgba(11,118,255,0.04);font-size:13px}
+  .notice{padding:8px;border-radius:8px;background: #fff3f2;color:var(--danger);margin-bottom:12px}
+  .flag {width:20px;height:14px;border-radius:2px;object-fit:cover;margin-right:8px;vertical-align:middle}
+  .flex {display:flex;align-items:center}
+  footer{font-size:12px;color:var(--muted);padding:12px 16px;text-align:center;border-top:1px solid rgba(11,118,255,0.03)}
+</style>
+</head>
+<body>
+
+<div class="app" role="application" aria-label="Currency converter app">
+  <!-- LEFT: main controls -->
+  <div class="left">
+    <h1>Currency Converter</h1>
+    <p class="lead">Live rates (powered by exchangerate.host). Enter an amount and pick currencies — results update instantly.</p>
+
+    <div id="offlineBanner" class="notice" style="display:none">You appear offline — using cached rates (may be outdated).</div>
+
+    <div class="row" style="margin-bottom:8px">
+      <label class="small" style="min-width:120px">Amount</label>
+      <input id="amount" type="number" inputmode="decimal" placeholder="1.00" step="any" value="1" />
+    </div>
+
+    <div class="row">
+      <div style="flex:1;min-width:160px">
+        <label class="small">From</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="fromCurrency" aria-label="From currency"></select>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <button id="swapBtn" class="swap" title="Swap currencies">🔁</button>
+      </div>
+
+      <div style="flex:1;min-width:160px">
+        <label class="small">To</label>
+        <select id="toCurrency" aria-label="To currency"></select>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <button id="convertBtn" class="btn">Convert (live)</button>
+      <button id="detectBtn" class="btn ghost" style="margin-left:8px">Auto-detect Currency</button>
+      <button id="resetBtn" class="btn ghost" style="margin-left:auto">Reset</button>
+    </div>
+
+    <div class="result-card" id="resultCard" aria-live="polite" style="margin-top:14px">
+      <div id="resultTop"><div class="big" id="convertedValue">—</div></div>
+      <div class="meta" id="rateInfo">Rate: —</div>
+      <div class="meta" id="lastUpdated">Last updated: —</div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700">Conversion History</div>
+        <div class="small" id="clearHistoryWrap"><button id="clearHistory" class="btn ghost">Clear</button></div>
+      </div>
+      <div class="history-list" id="historyList" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: chart + quick conversions + flags -->
+  <div class="right">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:700">Recent Conversions</div>
+        <div class="small">Quick view of latest conversions and trends</div>
+      </div>
+      <div class="small">Offline cache: <span id="cacheAge">—</span></div>
+    </div>
+
+    <canvas id="historyChart" style="margin-top:12px;max-height:220px"></canvas>
+
+    <div style="margin-top:16px">
+      <div style="font-weight:700;margin-bottom:8px">Quick conversions</div>
+      <div id="quickGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+    </div>
+
+    <div style="margin-top:16px">
+      <div style="font-weight:700">Notes</div>
+      <div class="small" style="margin-top:6px">
+        Rates are fetched from exchangerate.host. If you go offline the app uses the last cached rates saved in your browser localStorage. For automatic currency detection the app queries an IP-based service once (you can override the selection manually). Chart uses Chart.js.
+      </div>
+    </div>
+  </div>
+
+  <footer>Built with exchangerate.host · flags from FlagCDN/Flagpedia · auto-detect via ipapi.co</footer>
+</div>
+
+<script>
+/* -------------------------
+  CONFIG & HELPERS
+   Sources used while building:
+   - exchangerate.host API docs (latest & convert endpoints)
+   - ipapi.co for currency detection
+   - Flag CDN / Flagpedia for flag images
+   See: exchangerate.host docs & ipapi.co in app comments.
+--------------------------*/
+
+const API = {
+  // public, no-key endpoint (exchangerate.host)
+  latest: (base)=>`https://api.exchangerate.host/latest?base=${encodeURIComponent(base)}`,
+  convert: (from,to,amount)=>`https://api.exchangerate.host/convert?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&amount=${encodeURIComponent(amount)}`
+};
+// ipapi currency endpoint for auto-detect (simple)
+const IPAPI_CURRENCY = 'https://ipapi.co/currency/';
+
+// Simple mapping from currency to a representative country code to show flags.
+// This is intentionally compact — extend as needed for more currencies.
+const currencyToCountry = {
+  USD: 'us', EUR:'eu', GBP:'gb', INR:'in', JPY:'jp', AUD:'au', CAD:'ca',
+  CHF:'ch', CNY:'cn', HKD:'hk', SGD:'sg', NZD:'nz', KRW:'kr', RUB:'ru',
+  BRL:'br', ZAR:'za', AED:'ae', TRY:'tr', MXN:'mx'
+};
+
+// DOM
+const amountEl = document.getElementById('amount');
+const fromEl = document.getElementById('fromCurrency');
+const toEl = document.getElementById('toCurrency');
+const convertBtn = document.getElementById('convertBtn');
+const swapBtn = document.getElementById('swapBtn');
+const detectBtn = document.getElementById('detectBtn');
+const resetBtn = document.getElementById('resetBtn');
+const convertedValueEl = document.getElementById('convertedValue');
+const rateInfoEl = document.getElementById('rateInfo');
+const lastUpdatedEl = document.getElementById('lastUpdated');
+const historyList = document.getElementById('historyList');
+const historyChartCtx = document.getElementById('historyChart').getContext('2d');
+const offlineBanner = document.getElementById('offlineBanner');
+const cacheAgeEl = document.getElementById('cacheAge');
+const quickGrid = document.getElementById('quickGrid');
+const clearHistoryBtn = document.getElementById('clearHistory');
+
+// Local storage keys
+const LS = {
+  RATES: 'cer_rates_cache',       // stores { base, timestamp, rates }
+  HISTORY: 'cer_history_log'      // array of history items
+};
+
+// App state
+let symbols = [];      // list of supported currency codes
+let chart;             // Chart.js instance
+
+/* ---------- Utility functions ---------- */
+function showOffline(yes){
+  offlineBanner.style.display = yes ? 'block' : 'none';
+}
+function formatTime(ts){ return new Date(ts).toLocaleString(); }
+function setCacheAge(ts){
+  if(!ts){ cacheAgeEl.textContent = '—'; return; }
+  cacheAgeEl.textContent = new Date(ts).toLocaleString();
+}
+
+/* ---------- fetch supported currencies (symbols) ----------
+   exchangerate.host provides 'symbols'. For convenience we'll derive top currency list.
+   Note: free endpoints sometimes include a symbols endpoint; here we prepare a common set.
+-----------------------------------------------------------*/
+const COMMON = ['USD','EUR','GBP','INR','JPY','AUD','CAD','CHF','CNY','SGD','NZD','HKD','KRW','BRL','ZAR','AED','MXN','TRY','RUB'];
+
+function populateCurrencySelects(list){
+  symbols = list;
+  fromEl.innerHTML = '';
+  toEl.innerHTML = '';
+  const addOpt = (sel, code)=>{
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = code;
+    sel.appendChild(opt);
+  };
+  // Put COMMON first, then the rest
+  const rest = list.filter(c=>!COMMON.includes(c)).sort();
+  const ordered = [...COMMON.filter(c=>list.includes(c)), ...rest];
+  ordered.forEach(c=>{
+    addOpt(fromEl,c);
+    addOpt(toEl,c);
+  });
+  // set defaults
+  fromEl.value = 'USD';
+  toEl.value = 'EUR';
+  renderQuickGrid();
+}
+
+/* ---------- Try to load cached rates from localStorage ---------- */
+function loadCachedRates(){
+  try{
+    const raw = localStorage.getItem(LS.RATES);
+    if(!raw) return null;
+    return JSON.parse(raw);
+  }catch(e){ return null; }
+}
+
+/* ---------- Save rates to cache ---------- */
+function saveCachedRates(obj){
+  try{ localStorage.setItem(LS.RATES, JSON.stringify(obj)); } catch(e){}
+  setCacheAge(obj && obj.timestamp);
+}
+
+/* ---------- Fetch exchange rates for a base currency ---------- */
+async function fetchRates(base='USD'){
+  try{
+    const resp = await fetch(API.latest(base), {cache:'no-store'});
+    if(!resp.ok) throw new Error('Network error');
+    const data = await resp.json();
+    // Example response: { base: "USD", rates: {EUR:0.92,...}, date: "2025-11-07" }
+    const payload = { base: data.base || base, rates: data.rates || {}, timestamp: Date.now(), raw_date: data.date };
+    saveCachedRates(payload);
+    showOffline(false);
+    return payload;
+  }catch(err){
+    // If fetching fails -> return cached if present
+    const cached = loadCachedRates();
+    if(cached){
+      showOffline(true);
+      return cached;
+    } else {
+      throw err;
+    }
+  }
+}
+
+/* ---------- Convert amount using the convert endpoint (preferred) ----------
+   Using convert endpoint provides direct conversion handled server-side and avoids
+   rounding mismatches. But we also cache rates locally for offline usage.
+-----------------------------------------------------------*/
+async function doConvert(from, to, amount){
+  if(!amount || isNaN(amount)) {
+    convertedValueEl.textContent = 'Enter a valid amount';
+    rateInfoEl.textContent = '';
+    return;
+  }
+  try{
+    // Prefer the convert endpoint for single conversion
+    const resp = await fetch(API.convert(from,to,amount), {cache:'no-store'});
+    if(!resp.ok) throw new Error('Network error');
+    const data = await resp.json();
+    // data: {success:true, query:{...}, info:{rate:...}, result: 0.92, date:"2025-11-07"}
+    const result = data.result;
+    const rate = (data.info && data.info.rate) ? data.info.rate : null;
+    convertedValueEl.textContent = `${Number(result).toLocaleString(undefined,{maximumFractionDigits:6})} ${to}`;
+    rateInfoEl.textContent = rate ? `1 ${from} = ${rate} ${to}` : 'Rate info unavailable';
+    lastUpdatedEl.textContent = 'Source date: ' + (data.date || '-');
+
+    addToHistory({ts:Date.now(), from, to, amount:Number(amount), result:Number(result)});
+    updateHistoryUI();
+  }catch(err){
+    // fallback: use cached rates and compute locally
+    const cached = loadCachedRates();
+    if(cached && cached.rates){
+      const baseRates = cached.rates;
+      // rates are for cached.base — compute via USD-like bridging
+      // We will compute currencies relative to cached.base
+      if(!baseRates[from] || !baseRates[to]){
+        convertedValueEl.textContent = 'Conversion not available offline';
+        rateInfoEl.textContent = '';
+        return;
+      }
+      const rateFrom = baseRates[from];
+      const rateTo = baseRates[to];
+      // amount_in_base = amount / rateFrom  (since rates are base->X)
+      // converted = amount_in_base * rateTo
+      const converted = (Number(amount) / rateFrom) * rateTo;
+      convertedValueEl.textContent = `${Number(converted).toLocaleString(undefined,{maximumFractionDigits:6})} ${to}`;
+      rateInfoEl.textContent = `(offline) computed via cached base ${cached.base}`;
+      lastUpdatedEl.textContent = `Cached timestamp: ${new Date(cached.timestamp).toLocaleString()}`;
+      addToHistory({ts:Date.now(), from, to, amount:Number(amount), result:Number(converted)});
+      updateHistoryUI();
+      showOffline(true);
+    }else{
+      convertedValueEl.textContent = 'Conversion failed — no network or cache';
+      rateInfoEl.textContent = '';
+    }
+  }
+}
+
+/* ---------- History management (localStorage) ---------- */
+function getHistory(){
+  try{ return JSON.parse(localStorage.getItem(LS.HISTORY) || '[]'); } catch(e){ return []; }
+}
+function addToHistory(item){
+  const h = getHistory();
+  h.unshift(item); // newest first
+  while(h.length > 50) h.pop(); // keep max 50 entries
+  localStorage.setItem(LS.HISTORY, JSON.stringify(h));
+  renderChart();
+}
+function clearHistory(){
+  localStorage.removeItem(LS.HISTORY);
+  updateHistoryUI();
+}
+
+/* ---------- UI updates for history + quick buttons ---------- */
+function updateHistoryUI(){
+  const h = getHistory();
+  historyList.innerHTML = '';
+  if(h.length === 0) {
+    historyList.innerHTML = '<div class="small" style="padding:10px;color:var(--muted)">No conversions yet.</div>';
+  } else {
+    h.slice(0,50).forEach(it=>{
+      const wrap = document.createElement('div'); wrap.className = 'history-item';
+      const left = document.createElement('div'); left.className='flex';
+      left.innerHTML = `<img class="flag" src="${flagFor(it.from)}" alt="" onerror="this.style.display='none'"> <div>${it.amount} ${it.from} → ${it.to}</div>`;
+      const right = document.createElement('div'); right.innerHTML = `<div style="text-align:right">${Number(it.result).toLocaleString(undefined,{maximumFractionDigits:6})} <div class="small">${formatTime(it.ts)}</div></div>`;
+      wrap.appendChild(left); wrap.appendChild(right);
+      historyList.appendChild(wrap);
+    });
+  }
+  renderQuickGrid();
+  renderChart();
+}
+
+/* ---------- Helper to get a flag URL for a currency code ---------- */
+function flagFor(currency){
+  const cc = currencyToCountry[currency];
+  if(cc) return `https://flagcdn.com/w20/${cc}.png`; // FlagCDN small flags (20px)
+  // fallback: return data URI with emoji flag if possible
+  try{
+    // map 'US' from 'USD' etc fallback: show two-letter from currency code
+    const fallback = currency.slice(0,2);
+    return `https://flagcdn.com/w20/${fallback.toLowerCase()}.png`;
+  }catch(e){ return ''; }
+}
+
+/* ---------- Quick grid (popular conversions) ---------- */
+function renderQuickGrid(){
+  quickGrid.innerHTML = '';
+  const popular = ['USD/EUR','EUR/GBP','USD/INR','USD/JPY'];
+  popular.forEach(pair=>{
+    const [a,b] = pair.split('/');
+    const btn = document.createElement('button');
+    btn.className = 'btn ghost';
+    btn.style.justifyContent = 'flex-start';
+    btn.innerHTML = `<img class="flag" src="${flagFor(a)}" onerror="this.style.display='none'"> <span style="margin-left:6px">${a} → ${b}</span>`;
+    btn.onclick = ()=> {
+      amountEl.value = '1';
+      fromEl.value = a; toEl.value = b;
+      doConvert(a,b,1);
+    };
+    quickGrid.appendChild(btn);
+  });
+}
+
+/* ---------- Chart rendering (Chart.js) ---------- */
+function renderChart(){
+  const h = getHistory().slice(0,12).reverse(); // oldest -> newest
+  const labels = h.map(it=>new Date(it.ts).toLocaleTimeString());
+  const data = h.map(it=>it.result);
+  if(!chart){
+    chart = new Chart(historyChartCtx, {
+      type: 'line',
+      data: { labels, datasets: [{ label:'Converted value', data, fill:true, tension:0.3 }] },
+      options: {
+        plugins:{legend:{display:false}},
+        scales:{x:{display:true}, y:{display:true}}
+      }
+    });
+  } else {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = data;
+    chart.update();
+  }
+}
+
+/* ---------- Auto-detect currency via IP (ipapi.co/currency) ----------
+   Example: https://ipapi.co/currency/ returns "USD" for many US IPs.
+   Using IP service avoids asking geolocation permission.
+   See ipapi docs for details.
+-----------------------------------------------------------*/
+async function autodetectCurrency(){
+  try{
+    detectBtn.textContent = 'Detecting...';
+    const resp = await fetch(IPAPI_CURRENCY);
+    if(!resp.ok) throw new Error('IP detect failed');
+    const code = (await resp.text()).trim();
+    if(code && code.length===3){
+      fromEl.value = code.toUpperCase();
+      detectBtn.textContent = 'Detected: ' + code.toUpperCase();
+      setTimeout(()=> detectBtn.textContent = 'Auto-detect Currency', 2000);
+    } else {
+      detectBtn.textContent = 'Auto-detect Currency';
+      alert('Could not detect currency from IP.');
+    }
+  }catch(e){
+    detectBtn.textContent = 'Auto-detect Currency';
+    alert('Detection failed — check network or service.');
+  }
+}
+
+/* ---------- Initialization: load symbols & rates, populate UI ---------- */
+async function init(){
+  // Prepare currency list (we'll use a blend of common + fetched symbols)
+  const defaultList = COMMON.slice();
+  populateCurrencySelects(defaultList);
+
+  // Try to fetch rates for USD to prime the cache
+  try{
+    const ratesPayload = await fetchRates('USD'); // caches result
+    // Build symbol list from ratesPayload.rates keys + base
+    const derived = Object.keys(ratesPayload.rates || {});
+    if(ratesPayload.base) derived.push(ratesPayload.base);
+    const unique = Array.from(new Set([...derived, ...COMMON])).sort();
+    populateCurrencySelects(unique);
+    setCacheAge(ratesPayload.timestamp);
+  }catch(e){
+    // network + no cache -> keep defaults
+    console.warn('Could not fetch initial rates:', e);
+  }
+
+  // Render history
+  updateHistoryUI();
+}
+
+/* ---------- event wiring ---------- */
+convertBtn.addEventListener('click', ()=> doConvert(fromEl.value, toEl.value, amountEl.value));
+amountEl.addEventListener('input', ()=> {
+  // live convert as user types
+  const a = amountEl.value;
+  if(a === '') { convertedValueEl.textContent = 'Enter amount'; rateInfoEl.textContent = ''; return; }
+  doConvert(fromEl.value, toEl.value, a);
+});
+swapBtn.addEventListener('click', ()=>{
+  const a = fromEl.value, b = toEl.value;
+  fromEl.value = b; toEl.value = a;
+  doConvert(fromEl.value, toEl.value, amountEl.value);
+});
+detectBtn.addEventListener('click', autodetectCurrency);
+resetBtn.addEventListener('click', ()=>{
+  amountEl.value = '1';
+  fromEl.value = 'USD';
+  toEl.value = 'EUR';
+  convertedValueEl.textContent = '—';
+  rateInfoEl.textContent = '';
+});
+clearHistoryBtn.addEventListener('click', ()=> { if(confirm('Clear all conversion history?')) { clearHistory(); } });
+
+/* ---------- start ---------- */
+init().then(()=> {
+  // attempt a first conversion
+  doConvert(fromEl.value, toEl.value, amountEl.value);
+}).catch(e=> console.error(e));
+
+</script>
+</body>
+</html>
